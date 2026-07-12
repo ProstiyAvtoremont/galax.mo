@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Star Photo Moderation</title>
+<style>
+  body { background:#010105; color:#fff; font-family: sans-serif; padding:30px; }
+  h1 { color:#ffd700; }
+  #gate { max-width:400px; }
+  #gate input { padding:8px; width:100%; box-sizing:border-box; margin-bottom:10px; }
+  #gate button { padding:8px 16px; background:#ffd700; border:none; border-radius:6px; cursor:pointer; font-weight:bold; }
+  .card { display:flex; gap:16px; align-items:flex-start; background:#1a1a2e; border-radius:10px; padding:16px; margin-bottom:14px; }
+  .card img { width:180px; height:135px; object-fit:cover; border-radius:6px; background:#000; }
+  .meta { flex:1; }
+  .meta b { color:#ffd700; }
+  .msg { font-style:italic; opacity:0.85; margin:6px 0; }
+  .actions button { padding:8px 18px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; margin-right:8px; }
+  .approve { background:#2ecc71; color:#000; }
+  .reject { background:#e74c3c; color:#fff; }
+  #empty { opacity:0.6; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h1>⭐ Star Photo Moderation</h1>
+  <p>Enter admin secret to continue.</p>
+  <input type="password" id="secretInput" placeholder="Admin secret">
+  <button onclick="unlock()">Unlock</button>
+</div>
+
+<div id="panel" style="display:none;">
+  <h1>⭐ Pending Star Photos</h1>
+  <div id="list"></div>
+  <div id="empty" style="display:none;">Nothing pending review 🎉</div>
+</div>
+
+<script>
+  // Set this to wherever you deploy the moderate-star-photos worker
+  const WORKER_URL = "https://moderate-star-photos.YOUR-SUBDOMAIN.workers.dev";
+  let adminSecret = "";
+
+  function unlock() {
+    adminSecret = document.getElementById("secretInput").value.trim();
+    if (!adminSecret) return;
+    document.getElementById("gate").style.display = "none";
+    document.getElementById("panel").style.display = "block";
+    loadPending();
+  }
+
+  async function loadPending() {
+    const listEl = document.getElementById("list");
+    const emptyEl = document.getElementById("empty");
+    listEl.innerHTML = "Loading…";
+    try {
+      const resp = await fetch(WORKER_URL, {
+        headers: { "X-Admin-Secret": adminSecret }
+      });
+      if (resp.status === 401) {
+        alert("Wrong secret.");
+        location.reload();
+        return;
+      }
+      const items = await resp.json();
+      listEl.innerHTML = "";
+      if (!items || items.length === 0) {
+        emptyEl.style.display = "block";
+        return;
+      }
+      emptyEl.style.display = "none";
+      items.forEach(item => listEl.appendChild(renderCard(item)));
+    } catch (e) {
+      listEl.innerHTML = "Failed to load: " + e;
+    }
+  }
+
+  function renderCard(item) {
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML = `
+      <img src="${item.image_url}" alt="Star #${item.star_number} photo">
+      <div class="meta">
+        <div><b>Star #${item.star_number}</b> — ${item.tier}</div>
+        <div>By: ${escapeHtml(item.user_name || "Anonymous")}</div>
+        <div class="msg">"${escapeHtml(item.message || "")}"</div>
+        <div class="actions">
+          <button class="approve">Approve</button>
+          <button class="reject">Reject</button>
+        </div>
+      </div>
+    `;
+    div.querySelector(".approve").onclick = () => moderate(item.star_number, "approve", div);
+    div.querySelector(".reject").onclick = () => moderate(item.star_number, "reject", div);
+    return div;
+  }
+
+  async function moderate(starNumber, action, cardEl) {
+    cardEl.style.opacity = "0.4";
+    try {
+      const resp = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Secret": adminSecret },
+        body: JSON.stringify({ starNumber, action })
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      cardEl.remove();
+    } catch (e) {
+      alert("Failed: " + e);
+      cardEl.style.opacity = "1";
+    }
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+</script>
+</body>
+</html>
